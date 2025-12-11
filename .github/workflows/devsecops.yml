@@ -3,7 +3,10 @@ name: DevSecOps Pipeline
 on:
   push:
     branches: [ "main" ]
-
+permissions:
+  contents: read
+  security-events: write
+  actions: read
 jobs:
 
   devsecops:
