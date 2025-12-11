@@ -1,92 +1,127 @@
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import sqlite3
 import subprocess
-import hashlib
+import bcrypt
 import os
+import re
 
 app = Flask(__name__)
 
-# Hardcoded secret (vulnérabilité)
-SECRET_KEY = "dev-secret-key-12345"
+# SECRET KEY removed (never hardcode secrets)
+# SECRET_KEY = "dev-secret-key-12345"  # ❌ removed
 
-# -----------------------------------------------------
-# LOGIN (SQL INJECTION)
-# -----------------------------------------------------
+# -------------------------------------------
+# SECURE LOGIN (no SQL injection)
+# -------------------------------------------
 @app.route("/login", methods=["POST"])
 def login():
-    username = request.json.get("username")
-    password = request.json.get("password")
+    data = request.json
 
-    conn = sqlite3.connect("users.db")
-    cursor = conn.cursor()
+    username = data.get("username")
+    password = data.get("password")
 
-    # SQL Injection volontaire
-    query = f"SELECT * FROM users WHERE username='{username}' AND password='{password}'"
-    cursor.execute(query)
+    if not username or not password:
+        return jsonify({"error": "Missing fields"}), 400
 
-    result = cursor.fetchone()
+    try:
+        conn = sqlite3.connect("users.db")
+        cursor = conn.cursor()
 
-    if result:
-        return {"status": "success", "user": username}
+        cursor.execute("SELECT password FROM users WHERE username=?", (username,))
+        row = cursor.fetchone()
 
-    return {"status": "error", "message": "Invalid credentials"}
+        if row and bcrypt.checkpw(password.encode(), row[0].encode()):
+            return jsonify({"status": "success", "user": username})
 
-# -----------------------------------------------------
-# COMMAND INJECTION (ping)
-# -----------------------------------------------------
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    except Exception as e:
+        return jsonify({"error": "server error"}), 500
+
+
+# -------------------------------------------
+# SECURE PING (no command injection)
+# -------------------------------------------
 @app.route("/ping", methods=["POST"])
 def ping():
     host = request.json.get("host", "")
-    cmd = f"ping -c 1 {host}"   # vulnérable
-    output = subprocess.check_output(cmd, shell=True)
 
-    return {"output": output.decode()}
+    # Accept only valid hostname/IP
+    if not re.match(r"^[a-zA-Z0-9\.\-]+$", host):
+        return jsonify({"error": "Invalid host"}), 400
 
-# -----------------------------------------------------
-# EVAL (Remote Code Execution)
-# -----------------------------------------------------
+    try:
+        output = subprocess.check_output(["ping", "-c", "1", host])
+        return jsonify({"output": output.decode()})
+    except Exception:
+        return jsonify({"error": "Ping failed"}), 400
+
+
+# -------------------------------------------
+# SECURE COMPUTE (remove eval)
+# -------------------------------------------
 @app.route("/compute", methods=["POST"])
 def compute():
-    expression = request.json.get("expression", "1+1")
-    result = eval(expression)  # CRITIQUE
-    return {"result": result}
+    expression = request.json.get("expression")
 
-# -----------------------------------------------------
-# MD5 (hashing faible)
-# -----------------------------------------------------
+    return jsonify({"error": "This endpoint is disabled for security reasons"}), 403
+
+
+# -------------------------------------------
+# SECURE HASH (use bcrypt, not MD5)
+# -------------------------------------------
 @app.route("/hash", methods=["POST"])
 def hash_password():
-    pwd = request.json.get("password", "admin")
-    hashed = hashlib.md5(pwd.encode()).hexdigest()
-    return {"md5": hashed}
+    pwd = request.json.get("password")
 
-# -----------------------------------------------------
-# FILE READ (Directory traversal)
-# -----------------------------------------------------
+    if not pwd:
+        return jsonify({"error": "Missing password"}), 400
+
+    hashed = bcrypt.hashpw(pwd.encode(), bcrypt.gensalt()).decode()
+
+    return jsonify({"hash": hashed})
+
+
+# -------------------------------------------
+# SECURE FILE READING
+# -------------------------------------------
 @app.route("/readfile", methods=["POST"])
 def readfile():
-    filename = request.json.get("filename", "test.txt")
-    with open(filename, "r") as f:
-        content = f.read()
-    return {"content": content}
+    filename = request.json.get("filename")
 
-# -----------------------------------------------------
-# DEBUG ENDPOINT (expose secrets)
-# -----------------------------------------------------
+    # Allow only files in ./safe/
+    if not filename or "/" in filename or ".." in filename:
+        return jsonify({"error": "Invalid filename"}), 400
+
+    safe_path = os.path.join("safe", filename)
+
+    if not os.path.exists(safe_path):
+        return jsonify({"error": "File not found"}), 404
+
+    with open(safe_path, "r") as f:
+        content = f.read()
+
+    return jsonify({"content": content})
+
+
+# -------------------------------------------
+# REMOVE DEBUG ENDPOINT (dangerous)
+# -------------------------------------------
 @app.route("/debug", methods=["GET"])
 def debug():
-    return {
-        "debug": True,
-        "secret_key": SECRET_KEY,
-        "environment": dict(os.environ)
-    }
+    return jsonify({"error": "Debug disabled for security"}), 403
 
-# -----------------------------------------------------
+
+# -------------------------------------------
 # HELLO ENDPOINT
-# -----------------------------------------------------
+# -------------------------------------------
 @app.route("/hello", methods=["GET"])
 def hello():
-    return {"message": "Welcome to the DevSecOps vulnerable API"}
+    return jsonify({"message": "API secured successfully"})
 
+
+# -------------------------------------------
+# RUN APP
+# -------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
