@@ -31,19 +31,19 @@ jobs:
 
       - name: Run Bandit
         run: bandit -r api --severity-level high
-
+            # 4.Scan des dépendances Python
+      ############################################
+      - name: Install Safety
+        run: pip install safety
+      - name: Dependency vulnerability scan
+        run: safety check -r requirements.txt  
       ############################################
       # 3. Build Docker
       ############################################
       - name: Build Docker image
         run: docker build -t devsecops-api .
          ############################################
-      # 4.Scan des dépendances Python
-      ############################################
-      - name: Install Safety
-        run: pip install safety
-      - name: Dependency vulnerability scan
-        run: safety check -r requirements.txt  
+
 
       ############################################
       # 5. Scan Docker avec Trivy
